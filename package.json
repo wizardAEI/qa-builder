@@ -6,7 +6,10 @@
   "type": "module",
   "scripts": {
     "rollup": "rollup -c",
-    "package": "rollup -c && pkg ."
+    "convert-dev": "rollup -c && node dist/convert.js",
+    "html2md-dev": "rollup -c && node dist/html2md.js",
+    "html2md": "node dist/html2md.js",
+    "convert": "node dist/convert.js"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^25.0.7",

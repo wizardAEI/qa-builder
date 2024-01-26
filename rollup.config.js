@@ -6,7 +6,7 @@ export default [{
   input: 'src/convert.ts', // 你的入口文件
   output: {
     file: 'dist/convert.js', // 输出的文件路径和名称
-    format: 'commonjs' // ESM
+    format: 'esm' // ESM
   },
   plugins: [
     resolve(),
@@ -19,7 +19,7 @@ export default [{
   input: 'src/html2md.ts', // 你的入口文件
   output: {
     file: 'dist/html2md.js', // 输出的文件路径和名称
-    format: 'commonjs'
+    format: 'esm'
   },
   plugins: [
     resolve(),
