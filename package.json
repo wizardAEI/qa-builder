@@ -6,13 +6,14 @@
   "type": "module",
   "scripts": {
     "rollup": "rollup -c",
-    "convert-dev": "rollup -c && node dist/convert.js",
     "html2md-dev": "rollup -c && node dist/html2md.js",
+    "convert-dev": "rollup -c && node dist/convert.js",
     "html2md": "node dist/html2md.js",
     "convert": "node dist/convert.js"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-json": "^6.1.0",
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@types/markdown-it": "^13.0.7",
     "@types/node": "^20.11.5",
@@ -24,7 +25,9 @@
   "dependencies": {
     "@langchain/core": "^0.1.17",
     "@langchain/openai": "^0.0.12",
+    "dotenv": "^16.4.1",
     "markdown-it": "^14.0.0",
-    "node-html-markdown": "^1.3.0"
+    "node-html-markdown": "^1.3.0",
+    "rollup-plugin-dotenv": "^0.5.0"
   }
 }

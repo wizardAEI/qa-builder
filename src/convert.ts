@@ -1,6 +1,6 @@
 import markdownIt, { Token } from "markdown-it";
 import { lmInvoke } from "./langchain";
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { __dirname } from "./util";
 import path from "path";
 const md = markdownIt();
@@ -12,25 +12,13 @@ interface Node {
   children: Node[];
 }
 
-export function createTreeFromMarkdown(markdown: string): Node[] {
+export function createTreeFromMarkdown(  markdown: string,
+  config?: {
+    titleMaxLength?: number
+  }
+): Node[] {
   const tree: Node[] = [];
   const tokens: Token[] = md.parse(markdown, {});
-  if (!tokens.find((t) => t.type === "heading_open")) {
-    let i = 0;
-    while (i < tokens.length) {
-      if (tokens[i].type === "inline") {
-        tree.push({
-          title: tokens[i].content,
-          content: markdown,
-          total: markdown,
-          children: [],
-        });
-        break;
-      }
-      i++;
-    }
-    return tree;
-  }
   let i = 0;
   const isType = (tokenType: string) => {
     return tokens[i].type === tokenType;
@@ -41,6 +29,44 @@ export function createTreeFromMarkdown(markdown: string): Node[] {
     }
     return b;
   };
+  const getTitle = (str: string) => {
+    str = str.trim().split('\n')[0]
+    return str.slice(0, config?.titleMaxLength || 150)
+  }
+  const contentProcess = ():string => {
+    if(isType('list_item_open')) {
+      console.log(tokens[i])
+      let content = ''
+      content += "\n" + tokens[i].info + tokens[i].markup + " "
+      while(i < tokens.length && !isType('list_item_close')) {
+        i++
+        content += tokens[i].content ?  tokens[i].content + '\n' : ''      
+      }
+      return content.slice(0, -1)
+    }
+    if (isType("inline")) return '\n' + tokens[i].content
+    if (isType("fence")) {
+      const fence = tokens[i];
+      return "\n" +
+        fence.markup +
+        fence.info +
+        "\n" +
+        fence.content +
+        fence.markup;
+    }
+    return ""
+  }
+  let beforeContent = "";
+  while(i < tokens.length && !isType("heading_open")) {
+    beforeContent += contentProcess()
+    i++;
+  }
+  tree.push({
+    title: getTitle(beforeContent),
+    content: beforeContent,
+    total: beforeContent,
+    children: [],
+  });
   const buildTree = (options: {
     nodes: Node[];
     level: number;
@@ -61,21 +87,11 @@ export function createTreeFromMarkdown(markdown: string): Node[] {
       const title = content;
       content = markup + " " + content;
       while (i < tokens.length && !isType("heading_open")) {
-        if (isType("inline")) content += "\n" + tokens[i].content;
-        if (isType("fence")) {
-          const fence = tokens[i];
-          content +=
-            "\n" +
-            fence.markup +
-            fence.info +
-            "\n" +
-            fence.content +
-            fence.markup;
-        }
+        content += contentProcess()
         i++;
       }
       const node = {
-        title: title,
+        title: getTitle(title),
         content: content,
         total: "",
         children: [],
@@ -104,7 +120,11 @@ export function createTreeFromMarkdown(markdown: string): Node[] {
     }
     return totalBefore;
   };
-  buildTree({ nodes: tree, level: 1, totalBefore: "" });
+
+  i < tokens.length && 
+  buildTree({ nodes: tree,
+     level: parseInt(tokens[i].tag.slice(1)), 
+     totalBefore: "" });
   writeFileSync(
     path.resolve(__dirname, "../json_file/tree.json"),
     JSON.stringify(tree)
@@ -158,6 +178,17 @@ export async function getChunkFromNodes(
     } else {
       // 拆分成chunkSize大小
       const lines = total.split("\n");
+      if(lines.length <= 1) {
+        // 以size切分lines[0] 
+        const contents:string[] = []
+        while(lines[0].length > size) {
+          const content = lines[0].slice(0, size);
+          contents.push(content);
+          lines[0] = lines[0].slice(size);
+        }
+        contents.push(lines[0]);
+        return contents
+      }
       let content = "",
         contents: string[] = [];
       for (let i = 0; i < lines.length; i++) {
@@ -185,18 +216,13 @@ export async function getChunkFromNodes(
     const title =
       (data?.titleBefore ? data?.titleBefore + " " : "") + node.title;
     if (node.total.length < chunkSize) {
-      chunk.push({
-        indexes: [{ value: node.total }, { value: title }],
-        document: { content: node.total },
-      });
-      if (node.total !== node.content) {
-        chunk[chunk.length - 1].indexes.push({ value: node.content });
-      }
+      chunk.push({indexes: [{ value: node.title }], document: { content: node.total },});
+      if (node.title !== node.content) chunk[chunk.length - 1].indexes.push({ value: node.content });
+      if (node.title !== node.total)  chunk[chunk.length - 1].indexes.push({ value: node.total });
       // TODO: 这里使用大模型，由于时间问题后续需要加上进度功能
       if (options.useLM) {
         const index = chunk.length - 1;
         chunkTask.push(index);
-        console.log("task-1", index);
         getQuestionsByLM(node.total).then((questions) => {
           questions.forEach((question) => {
             chunk[index].indexes.push({ value: question });
@@ -248,7 +274,6 @@ export async function getChunkFromNodes(
           if (options.useLM) {
             const index = chunk.length - 1;
             chunkTask.push(index);
-            console.log("task", index);
             // TODO: 这里使用大模型，由于时间问题后续需要加上进度功能
             getQuestionsByLM(content).then((questions) => {
               questions.forEach((question) => {
@@ -295,10 +320,11 @@ export async function getChunkFromNodes(
     path.resolve(__dirname, "../md_file/file.md"),
     "utf-8"
   );
+  if(!existsSync(path.resolve(__dirname, "../json_file"))) mkdirSync(path.resolve(__dirname, "../json_file"));
   getChunkFromNodes(createTreeFromMarkdown(md), {
     chunkSize: 700,
     chunkOverlap: 2,
-    useLM: false,
+    useLM: true,
   }).then((chunks) => {
     writeFileSync(
       path.resolve(__dirname, "../json_file/chunks.json"),
@@ -311,3 +337,5 @@ export async function getChunkFromNodes(
     );
   });
 })();
+
+
