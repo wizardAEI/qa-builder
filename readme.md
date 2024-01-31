@@ -1,4 +1,4 @@
-0. `.env` 文件配置 OPENAI_API_KEY=xxx
+0. `.env` 文件配置 OPENAI_API_KEY=xxx  DOC_URL=xxx
 
 1. 执行 `yarn html2md-dev`
 

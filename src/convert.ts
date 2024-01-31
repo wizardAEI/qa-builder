@@ -35,7 +35,6 @@ export function createTreeFromMarkdown(  markdown: string,
   }
   const contentProcess = ():string => {
     if(isType('list_item_open')) {
-      console.log(tokens[i])
       let content = ''
       content += "\n" + tokens[i].info + tokens[i].markup + " "
       while(i < tokens.length && !isType('list_item_close')) {
@@ -61,7 +60,7 @@ export function createTreeFromMarkdown(  markdown: string,
     beforeContent += contentProcess()
     i++;
   }
-  tree.push({
+  beforeContent && tree.push({
     title: getTitle(beforeContent),
     content: beforeContent,
     total: beforeContent,
