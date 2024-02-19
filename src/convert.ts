@@ -6,101 +6,136 @@ import path from "path";
 const md = markdownIt();
 
 interface Node {
+  markup: string;
   title: string;
   content: string;
   total: string;
   children: Node[];
 }
 
-export function createTreeFromMarkdown(  markdown: string,
+const splice = (a: string, b: string) => {
+  b = (b || '')
+  if (a.length) {
+    return a + "\n" + b;
+  }
+  return b;
+};
+
+export function createTreeFromMarkdown(
+  markdown: string,
   config?: {
-    titleMaxLength?: number
+    titleMaxLength?: number;
   }
 ): Node[] {
   const tree: Node[] = [];
   const tokens: Token[] = md.parse(markdown, {});
-  let i = 0;
+  let tokenIndex = 0;
   const isType = (tokenType: string) => {
-    return tokens[i].type === tokenType;
-  };
-  const splice = (a: string, b: string) => {
-    if (a.length) {
-      return a + "\n" + b;
-    }
-    return b;
+    return tokens[tokenIndex].type === tokenType;
   };
   const getTitle = (str: string) => {
-    str = str.trim().split('\n')[0]
-    return str.slice(0, config?.titleMaxLength || 150)
-  }
-  const contentProcess = ():string => {
-    if(isType('list_item_open')) {
-      let content = ''
-      content += "\n" + tokens[i].info + tokens[i].markup + " "
-      while(i < tokens.length && !isType('list_item_close')) {
-        i++
-        content += tokens[i].content ?  tokens[i].content + '\n' : ''      
+    str = str.trim().split("\n")[0];
+    return str.slice(0, config?.titleMaxLength || 150);
+  };
+  const contentProcess = (): string => {
+    if (isType("list_item_open")) {
+      let content = "";
+      content += "\n" + tokens[tokenIndex].info + tokens[tokenIndex].markup + " ";
+      while (tokenIndex < tokens.length && !isType("list_item_close")) {
+        tokenIndex++;
+        content += tokens[tokenIndex].content ? tokens[tokenIndex].content + "\n" : "";
       }
-      return content.slice(0, -1)
+      return content.slice(0, -1);
     }
-    if (isType("inline")) return '\n' + tokens[i].content
+    if (isType("inline")) return "\n" + tokens[tokenIndex].content;
     if (isType("fence")) {
-      const fence = tokens[i];
-      return "\n" +
-        fence.markup +
-        fence.info +
-        "\n" +
-        fence.content +
-        fence.markup;
+      const fence = tokens[tokenIndex];
+      return (
+        "\n" + fence.markup + fence.info + "\n" + fence.content + fence.markup
+      );
     }
-    return ""
-  }
+    if (tokens[tokenIndex].type === "table_open") {
+      let isInsideRow = false,currentRow = "",tableMarkdown = "", isHeader = false,  headerNum = 0
+      for (; tokenIndex < tokens.length; tokenIndex++) {
+        const token = tokens[tokenIndex];
+        if (token.type === "table_close") break;
+        if (token.type === "tr_open") {
+          isInsideRow = true; currentRow = "|";
+        } else if (token.type === "tr_close") {
+          isInsideRow = false;
+          tableMarkdown += currentRow.trim() + "\n";
+          if(!isHeader) {
+            isHeader = true;
+            for(let i = 0; i < headerNum; i++) tableMarkdown += '|-'
+            tableMarkdown += '|\n'
+          }
+        } else if (
+          isInsideRow &&
+          (token.type === "th_open" || token.type === "td_open")
+        ) {
+          if (token.type === "th_open" && !isHeader) headerNum++
+        } else if (
+          isInsideRow &&
+          (token.type === "th_close" || token.type === "td_close")
+        ) {
+          currentRow += "|";
+        } else if (isInsideRow) {
+          currentRow += contentProcess().slice(1);
+        }
+      }
+      return "\n" + tableMarkdown.slice(0, -1);
+    }
+    return "";
+  };
   let beforeContent = "";
-  while(i < tokens.length && !isType("heading_open")) {
-    beforeContent += contentProcess()
-    i++;
+  while (tokenIndex < tokens.length && !isType("heading_open")) {
+    beforeContent += contentProcess();
+    tokenIndex++;
   }
-  beforeContent && tree.push({
-    title: getTitle(beforeContent),
-    content: beforeContent,
-    total: beforeContent,
-    children: [],
-  });
+  beforeContent &&
+    tree.push({
+      markup: "",
+      title: getTitle(beforeContent),
+      content: beforeContent,
+      total: beforeContent,
+      children: [],
+    });
   const buildTree = (options: {
     nodes: Node[];
     level: number;
     totalBefore: string;
   }) => {
     let { nodes, level, totalBefore } = options;
-    while (i < tokens.length) {
+    while (tokenIndex < tokens.length) {
       if (!isType("heading_open")) {
-        i++;
+        tokenIndex++;
         continue;
       }
-      const markup = tokens[i].markup;
+      const markup = tokens[tokenIndex].markup;
       let content = "";
-      while (i < tokens.length && !isType("heading_close")) {
-        i++;
-        content += tokens[i].content;
+      while (tokenIndex < tokens.length && !isType("heading_close")) {
+        tokenIndex++;
+        content += tokens[tokenIndex].content;
       }
       const title = content;
       content = markup + " " + content;
-      while (i < tokens.length && !isType("heading_open")) {
-        content += contentProcess()
-        i++;
+      while (tokenIndex < tokens.length && !isType("heading_open")) {
+        content += contentProcess();
+        tokenIndex++;
       }
       const node = {
+        markup,
         title: getTitle(title),
         content: content,
         total: "",
         children: [],
       };
       nodes.push(node);
-      if (i === tokens.length) {
+      if (tokenIndex >= tokens.length) {
         node.total = content;
         return splice(totalBefore, content);
       }
-      const levelNext = parseInt(tokens[i].tag.slice(1));
+      const levelNext = parseInt(tokens[tokenIndex].tag.slice(1));
       if (levelNext > level) {
         node.total = buildTree({
           nodes: node.children,
@@ -119,15 +154,13 @@ export function createTreeFromMarkdown(  markdown: string,
     }
     return totalBefore;
   };
-
-  i < tokens.length && 
-  buildTree({ nodes: tree,
-     level: parseInt(tokens[i].tag.slice(1)), 
-     totalBefore: "" });
-  writeFileSync(
-    path.resolve(__dirname, "../json_file/tree.json"),
-    JSON.stringify(tree)
-  );
+  while (tokenIndex < tokens.length) {
+    buildTree({
+      nodes: tree,
+      level: parseInt(tokens[tokenIndex].tag.slice(1)),
+      totalBefore: "",
+    });
+  }
   return tree;
 }
 
@@ -153,8 +186,10 @@ async function getQuestionsByLM(total: string): Promise<string[]> {
 }
 
 export interface Chunk {
+  // indexes 含有以下索引：1.其所有祖先的标题+自身标题 2.当前标题下内容 3.当前标题和子标题下所有内容 4. 大模型根据2的提问
   indexes: { value: string }[];
   document: { content: string };
+  from?: string;
 }
 
 export async function getChunkFromNodes(
@@ -163,8 +198,9 @@ export async function getChunkFromNodes(
     chunkSize: number;
     chunkOverlap: number;
     useLM?: boolean;
+    from?: string;
   } = {
-    chunkSize: 500,
+    chunkSize: 700,
     chunkOverlap: 2, // 左右两个节点
   }
 ): Promise<Chunk[]> {
@@ -177,16 +213,16 @@ export async function getChunkFromNodes(
     } else {
       // 拆分成chunkSize大小
       const lines = total.split("\n");
-      if(lines.length <= 1) {
-        // 以size切分lines[0] 
-        const contents:string[] = []
-        while(lines[0].length > size) {
+      if (lines.length <= 1) {
+        // 以size切分lines[0]
+        const contents: string[] = [];
+        while (lines[0].length > size) {
           const content = lines[0].slice(0, size);
           contents.push(content);
           lines[0] = lines[0].slice(size);
         }
         contents.push(lines[0]);
-        return contents
+        return contents;
       }
       let content = "",
         contents: string[] = [];
@@ -203,6 +239,14 @@ export async function getChunkFromNodes(
       return contents;
     }
   };
+  const processTitle = (titles: string): string => {
+    return titles
+      .split("\n")
+      .reduce((prev, curr) => {
+        return prev + " " + curr.trim().replace(/(^#+) /, "");
+      }, "")
+      .trim();
+  };
 
   const dfs = (
     nodes: Node[],
@@ -212,12 +256,20 @@ export async function getChunkFromNodes(
     }
   ) => {
     const node = nodes[index];
-    const title =
-      (data?.titleBefore ? data?.titleBefore + " " : "") + node.title;
+    const totalTitle = splice(
+      data?.titleBefore ? data?.titleBefore : "",
+      node.markup + " " + node.title
+    );
     if (node.total.length < chunkSize) {
-      chunk.push({indexes: [{ value: node.title }], document: { content: node.total },});
-      if (node.title !== node.content) chunk[chunk.length - 1].indexes.push({ value: node.content });
-      if (node.title !== node.total)  chunk[chunk.length - 1].indexes.push({ value: node.total });
+      chunk.push({
+        indexes: [{ value: processTitle(totalTitle) }],
+        document: { content: splice(data?.titleBefore ?? "", node.total) },
+        from: options.from,
+      });
+      if (node.title !== node.content)
+        chunk[chunk.length - 1].indexes.push({ value: node.content });
+      if (node.title !== node.total)
+        chunk[chunk.length - 1].indexes.push({ value: node.total });
       // TODO: 这里使用大模型，由于时间问题后续需要加上进度功能
       if (options.useLM) {
         const index = chunk.length - 1;
@@ -265,10 +317,11 @@ export async function getChunkFromNodes(
     } else {
       const pushContent = async (contents: string[]) => {
         for (let i = 0; i < contents.length; i++) {
-          const content = contents[i];
+          const content = contents[i].startsWith(node.markup + ' ') ? splice(data?.titleBefore ?? "", contents[i]) : splice(totalTitle, contents[i]);
           chunk.push({
-            indexes: [{ value: content }, { value: title }],
+            indexes: [{ value: content }, { value: processTitle(totalTitle) }],
             document: { content },
+            from: options.from,
           });
           if (options.useLM) {
             const index = chunk.length - 1;
@@ -295,7 +348,7 @@ export async function getChunkFromNodes(
       }
       for (let i = 0; i < node.children.length; i++) {
         dfs(node.children, i, {
-          titleBefore: title,
+          titleBefore: totalTitle,
         });
       }
     }
@@ -319,11 +372,17 @@ export async function getChunkFromNodes(
     path.resolve(__dirname, "../md_file/file.md"),
     "utf-8"
   );
-  if(!existsSync(path.resolve(__dirname, "../json_file"))) mkdirSync(path.resolve(__dirname, "../json_file"));
-  getChunkFromNodes(createTreeFromMarkdown(md), {
+  if (!existsSync(path.resolve(__dirname, "../json_file")))
+    mkdirSync(path.resolve(__dirname, "../json_file"));
+  const nodes = createTreeFromMarkdown(md);
+  writeFileSync(
+    path.resolve(__dirname, "../json_file/tree.json"),
+    JSON.stringify(nodes)
+  );
+  getChunkFromNodes(nodes, {
     chunkSize: 700,
-    chunkOverlap: 2,
-    useLM: true,
+    chunkOverlap: 0,
+    useLM: false,
   }).then((chunks) => {
     writeFileSync(
       path.resolve(__dirname, "../json_file/chunks.json"),
@@ -336,5 +395,3 @@ export async function getChunkFromNodes(
     );
   });
 })();
-
-
