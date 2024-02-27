@@ -390,7 +390,7 @@ export async function getChunkFromNodes(
   getChunkFromNodes(nodes, {
     chunkSize: 700,
     chunkOverlap: 2,
-    useLM: true,
+    useLM: false,
   }).then((chunks) => {
     writeFileSync(
       path.resolve(__dirname, "../json_file/chunks.json"),
