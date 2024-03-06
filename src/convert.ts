@@ -13,8 +13,12 @@ interface Node {
   children: Node[];
 }
 
+function postMsgToMainWindow(msg: string) {
+  console.log(msg);
+}
+
 const splice = (a: string, b: string) => {
-  b = (b || '')
+  b = b || "";
   if (a.length) {
     return a + "\n" + b;
   }
@@ -40,10 +44,13 @@ export function createTreeFromMarkdown(
   const contentProcess = (): string => {
     if (isType("list_item_open")) {
       let content = "";
-      content += "\n" + tokens[tokenIndex].info + tokens[tokenIndex].markup + " ";
+      content +=
+        "\n" + tokens[tokenIndex].info + tokens[tokenIndex].markup + " ";
       while (tokenIndex < tokens.length && !isType("list_item_close")) {
         tokenIndex++;
-        content += tokens[tokenIndex].content ? tokens[tokenIndex].content + "\n" : "";
+        content += tokens[tokenIndex].content
+          ? tokens[tokenIndex].content + "\n"
+          : "";
       }
       return content.slice(0, -1);
     }
@@ -55,25 +62,30 @@ export function createTreeFromMarkdown(
       );
     }
     if (tokens[tokenIndex].type === "table_open") {
-      let isInsideRow = false,currentRow = "",tableMarkdown = "", isHeader = false,  headerNum = 0
+      let isInsideRow = false,
+        currentRow = "",
+        tableMarkdown = "",
+        isHeader = false,
+        headerNum = 0;
       for (; tokenIndex < tokens.length; tokenIndex++) {
         const token = tokens[tokenIndex];
         if (token.type === "table_close") break;
         if (token.type === "tr_open") {
-          isInsideRow = true; currentRow = "|";
+          isInsideRow = true;
+          currentRow = "|";
         } else if (token.type === "tr_close") {
           isInsideRow = false;
           tableMarkdown += currentRow.trim() + "\n";
-          if(!isHeader) {
+          if (!isHeader) {
             isHeader = true;
-            for(let i = 0; i < headerNum; i++) tableMarkdown += '|-'
-            tableMarkdown += '|\n'
+            for (let i = 0; i < headerNum; i++) tableMarkdown += "|-";
+            tableMarkdown += "|\n";
           }
         } else if (
           isInsideRow &&
           (token.type === "th_open" || token.type === "td_open")
         ) {
-          if (token.type === "th_open" && !isHeader) headerNum++
+          if (token.type === "th_open" && !isHeader) headerNum++;
         } else if (
           isInsideRow &&
           (token.type === "th_close" || token.type === "td_close")
@@ -202,18 +214,22 @@ export interface Chunk {
 export async function getChunkFromNodes(
   nodes: Node[],
   options: {
-    chunkSize: number;
-    chunkOverlap: number;
+    chunkSize?: number;
+    chunkOverlap?: number;
     useLM?: boolean;
-    from?: string;
-  } = {
-    chunkSize: 700,
-    chunkOverlap: 2, // 左右两个节点
+    nodesFrom?: string;
+    skipOnlyTitleContent?: boolean;
   }
 ): Promise<Chunk[]> {
   const chunk: Chunk[] = [];
-  const { chunkSize, chunkOverlap } = options;
-  const chunkTask: number[] = [];
+  const {
+    chunkSize = 1500,
+    chunkOverlap = 2,
+    skipOnlyTitleContent = true,
+    useLM = false,
+    nodesFrom,
+  } = options;
+  const chunkTask: (number | Error)[] = [];
   const split = (total: string, size: number) => {
     if (total.match(/```/)) {
       return [total];
@@ -268,28 +284,30 @@ export async function getChunkFromNodes(
       node.markup + " " + node.title
     );
     if (node.total.length < chunkSize) {
-      const content  = splice(data?.titleBefore ?? "", node.total);
+      const content = splice(data?.titleBefore ?? "", node.total);
       chunk.push({
         indexes: [{ value: processTitle(totalTitle) }],
         document: { content },
-        from: options.from,
+        from: nodesFrom,
       });
       if (node.title !== node.content)
         chunk[chunk.length - 1].indexes.push({ value: node.content });
       if (node.title !== node.total)
         chunk[chunk.length - 1].indexes.push({ value: node.total });
-      // TODO: 这里使用大模型，由于时间问题后续需要加上进度功能
-      if (options.useLM) {
+      if (useLM) {
         const index = chunk.length - 1;
         chunkTask.push(index);
-        getQuestionsByLM(content).then((questions) => {
-          questions.forEach((question) => {
-            chunk[index].indexes.push({ value: question });
+        getQuestionsByLM(content)
+          .then((questions) => {
+            questions.forEach((question) => {
+              chunk[index].indexes.push({ value: question });
+            });
+            chunkTask.splice(chunkTask.indexOf(index), 1);
+          })
+          .catch((err) => {
+            chunkTask.splice(chunkTask.indexOf(index), 1, err);
           });
-          chunkTask.splice(chunkTask.indexOf(index), 1);
-        });
       }
-      // TODO: 尝试加上 chunkOverlap 是否有效果
       let lapLNum = 0,
         lapRNum = 0;
       while (lapLNum + lapRNum < chunkOverlap) {
@@ -325,22 +343,33 @@ export async function getChunkFromNodes(
     } else {
       const pushContent = async (contents: string[]) => {
         for (let i = 0; i < contents.length; i++) {
-          const content = contents[i].startsWith(node.markup + ' ') ? splice(data?.titleBefore ?? "", contents[i]) : splice(totalTitle, contents[i]);
+          const content = contents[i].startsWith(node.markup + " ")
+            ? splice(data?.titleBefore ?? "", contents[i])
+            : splice(totalTitle, contents[i]);
+          if (
+            skipOnlyTitleContent &&
+            content.indexOf("\n") === -1 &&
+            content.replace(/^#+\s/, "").trim() === node.title.trim()
+          )
+            continue;
           chunk.push({
             indexes: [{ value: content }, { value: processTitle(totalTitle) }],
             document: { content },
-            from: options.from,
+            from: nodesFrom,
           });
-          if (options.useLM) {
+          if (useLM) {
             const index = chunk.length - 1;
             chunkTask.push(index);
-            // TODO: 这里使用大模型，由于时间问题后续需要加上进度功能
-            getQuestionsByLM(content).then((questions) => {
-              questions.forEach((question) => {
-                chunk[index].indexes.push({ value: question });
+            getQuestionsByLM(content)
+              .then((questions) => {
+                questions.forEach((question) => {
+                  chunk[index].indexes.push({ value: question });
+                });
+                chunkTask.splice(chunkTask.indexOf(index), 1);
+              })
+              .catch((err) => {
+                chunkTask.splice(chunkTask.indexOf(index), 1, err);
               });
-              chunkTask.splice(chunkTask.indexOf(index), 1);
-            });
           }
         }
       };
@@ -367,8 +396,10 @@ export async function getChunkFromNodes(
   // 等待所有任务完成,或超时（60s）
   let timeout = 60 * 1000;
   while (chunkTask.length && timeout > 0) {
-    console.log("wait", chunkTask);
-    // sleep(100)
+    // 如果有error，则直接退出
+    const error = chunkTask.find((index) => typeof index !== 'number')
+    if (error) throw error
+    postMsgToMainWindow(`progress 执行优化任务，剩余${chunkTask.length}个`)
     await new Promise((resolve) => setTimeout(resolve, 1000));
     timeout -= 1000;
   }
