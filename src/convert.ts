@@ -216,8 +216,9 @@ export async function getChunkFromNodes(
   options: {
     chunkSize?: number;
     chunkOverlap?: number;
-    useLM?: boolean;
+    useLLM?: boolean;
     nodesFrom?: string;
+    skipContent?: boolean;
     skipOnlyTitleContent?: boolean;
   }
 ): Promise<Chunk[]> {
@@ -225,8 +226,9 @@ export async function getChunkFromNodes(
   const {
     chunkSize = 1500,
     chunkOverlap = 2,
+    useLLM = false,
+    skipContent = false,
     skipOnlyTitleContent = true,
-    useLM = false,
     nodesFrom,
   } = options;
   const chunkTask: (number | Error)[] = [];
@@ -290,11 +292,7 @@ export async function getChunkFromNodes(
         document: { content },
         from: nodesFrom,
       });
-      if (node.title !== node.content)
-        chunk[chunk.length - 1].indexes.push({ value: node.content });
-      if (node.title !== node.total)
-        chunk[chunk.length - 1].indexes.push({ value: node.total });
-      if (useLM) {
+      if (useLLM) {
         const index = chunk.length - 1;
         chunkTask.push(index);
         getQuestionsByLM(content)
@@ -340,6 +338,11 @@ export async function getChunkFromNodes(
           break;
         }
       }
+      if (skipContent) return;
+      if (node.title !== node.content && node.content.replace(/^#+\s/, "").trim() !== node.title.trim())
+        chunk[chunk.length - 1].indexes.push({ value: node.content });
+      if (node.title !== node.total && node.total !== node.content)
+        chunk[chunk.length - 1].indexes.push({ value: node.total });
     } else {
       const pushContent = async (contents: string[]) => {
         for (let i = 0; i < contents.length; i++) {
@@ -353,22 +356,23 @@ export async function getChunkFromNodes(
           )
             continue;
           chunk.push({
-            indexes: [{ value: content }, { value: processTitle(totalTitle) }],
+            indexes: [{ value: processTitle(totalTitle) }],
             document: { content },
             from: nodesFrom,
           });
-          if (useLM) {
-            const index = chunk.length - 1;
-            chunkTask.push(index);
+          const chunkIndex = chunk.length - 1;
+          if (!skipContent) chunk[chunkIndex].indexes.push({ value: content });
+          if (useLLM) {
+            chunkTask.push(chunkIndex);
             getQuestionsByLM(content)
               .then((questions) => {
                 questions.forEach((question) => {
-                  chunk[index].indexes.push({ value: question });
+                  chunk[chunkIndex].indexes.push({ value: question });
                 });
-                chunkTask.splice(chunkTask.indexOf(index), 1);
+                chunkTask.splice(chunkTask.indexOf(chunkIndex), 1);
               })
               .catch((err) => {
-                chunkTask.splice(chunkTask.indexOf(index), 1, err);
+                chunkTask.splice(chunkTask.indexOf(chunkIndex), 1, err);
               });
           }
         }
@@ -397,9 +401,9 @@ export async function getChunkFromNodes(
   let timeout = 60 * 1000;
   while (chunkTask.length && timeout > 0) {
     // 如果有error，则直接退出
-    const error = chunkTask.find((index) => typeof index !== 'number')
-    if (error) throw error
-    postMsgToMainWindow(`progress 执行优化任务，剩余${chunkTask.length}个`)
+    const error = chunkTask.find((index) => typeof index !== "number");
+    if (error) throw error;
+    postMsgToMainWindow(`progress 执行优化任务，剩余${chunkTask.length}个`);
     await new Promise((resolve) => setTimeout(resolve, 1000));
     timeout -= 1000;
   }
@@ -421,7 +425,7 @@ export async function getChunkFromNodes(
   getChunkFromNodes(nodes, {
     chunkSize: 700,
     chunkOverlap: 2,
-    useLM: false,
+    useLLM: false,
   }).then((chunks) => {
     writeFileSync(
       path.resolve(__dirname, "../json_file/chunks.json"),
